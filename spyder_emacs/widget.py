@@ -5,7 +5,7 @@ from .server import EmacsProcess, SpyderEPCServer
 
 import time
 from threading import Thread
-import logging
+import logging, queue
 logger = logging.getLogger(__name__)
 
 class EmacsWidget(QtWidgets.QWidget):
@@ -13,12 +13,30 @@ class EmacsWidget(QtWidgets.QWidget):
         super(EmacsWidget, self).__init__(*args, **kwargs)
         self.plugin = plugin
         self._started = False
+        self._resizeQueue = queue.Queue()
+        def run():
+            while True:
+                _exit_sig = self._resizeQueue.get()
+                if _exit_sig:
+                    break
+                while True:
+                    try:
+                        _exit_sig = self._resizeQueue.get(False)
+                        if _exit_sig:
+                            return
+                    except:
+                        break
+                while not self._server.clients:
+                    time.sleep(0.1)
+                self._server.clients[0].call("set-width", [int(self.geometry().width())-40])
+                self._server.clients[0].call("set-height", [int(self.geometry().height())-20])
+                time.sleep(0.1)
+                self._resizeQueue.task_done()
+        self._resizeThread = Thread(target=run)
+        self._resizeThread.start()
 
     def _resize_emacs(self):
-        while not self._server.clients:
-            time.sleep(0.1)
-        self._server.clients[0].call("set-width", [int(self.geometry().width()*0.95)])
-        self._server.clients[0].call("set-height", [int(self.geometry().height()*0.97)])
+        self._resizeQueue.put(False)
 
     def start(self):
         self._started = True
@@ -40,6 +58,4 @@ class EmacsWidget(QtWidgets.QWidget):
         super().resizeEvent(event)
         if not self._started:
             self.start()
-        thread = Thread(target=self._resize_emacs)
-        thread.daemon = True
-        thread.start()
+        self._resize_emacs()
